@@ -124,7 +124,7 @@ serve(async (req) => {
     };
 
     // Compute crypto factors if sufficient holdings
-    if (cryptoHoldings.length >= 5) {
+    if (cryptoHoldings.length >= 3) {
       try {
         console.log(`Fetching crypto factors from ${FACTORS_API_URL}/factors/compare`);
         const cryptoResponse = await fetch(`${FACTORS_API_URL}/factors/compare`);
@@ -142,7 +142,7 @@ serve(async (req) => {
 
     // Compute equity factors if sufficient holdings
     // For MVP, use same endpoint (will be enhanced later with equity-specific logic)
-    if (equityHoldings.length >= 5) {
+    if (equityHoldings.length >= 3) {
       try {
         console.log(`Fetching equity factors from ${FACTORS_API_URL}/factors/compare`);
         const equityResponse = await fetch(`${FACTORS_API_URL}/factors/compare`);
@@ -159,8 +159,8 @@ serve(async (req) => {
     }
 
     // Generate summary
-    const cryptoMsg = cryptoHoldings.length >= 5 ? `${cryptoHoldings.length} crypto holdings analyzed` : `${cryptoHoldings.length} crypto holdings (min 5 required)`;
-    const equityMsg = equityHoldings.length >= 5 ? `${equityHoldings.length} equity holdings analyzed` : `${equityHoldings.length} equity holdings (min 5 required)`;
+    const cryptoMsg = cryptoHoldings.length >= 3 ? `${cryptoHoldings.length} crypto holdings analyzed` : `${cryptoHoldings.length} crypto holdings (min 3 required)`;
+    const equityMsg = equityHoldings.length >= 3 ? `${equityHoldings.length} equity holdings analyzed` : `${equityHoldings.length} equity holdings (min 3 required)`;
     results.summary = `Factor analysis completed. ${cryptoMsg}, ${equityMsg}.`;
 
     // Generate recommendations

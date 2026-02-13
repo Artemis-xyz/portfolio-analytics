@@ -335,6 +335,78 @@ async def compare_factors():
     return {"comparison": comparison}
 
 
+@app.get("/factors/time-series")
+async def get_factors_time_series(
+    factors: str = Query(default=",".join(AVAILABLE_FACTORS), description="Comma-separated list of factors"),
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    normalize_to_100: bool = Query(default=True),
+) -> Dict[str, FactorReturns]:
+    """
+    Get time series data for multiple factors.
+
+    Returns full cumulative return time series for requested factors,
+    optionally normalized to 100 at start date.
+    """
+    result = {}
+    factors_list = [f.strip() for f in factors.split(",") if f.strip()]
+
+    for factor in factors_list:
+        if factor not in AVAILABLE_FACTORS:
+            continue
+
+        try:
+            # Load factor logs to get latest run info
+            df = load_factor_logs(factor)
+            if df.empty:
+                continue
+
+            latest_run = df.iloc[-1]
+            run_id = latest_run.get("run_id")
+
+            # Try to load time series from stored CSV file
+            time_series_file = FACTOR_LOGS_DIR / f"{factor}_{run_id}_returns.csv"
+
+            if not time_series_file.exists():
+                # Skip if no time series data available
+                print(f"No time series file found for {factor}: {time_series_file}")
+                continue
+
+            # Load time series data
+            ts_df = pd.read_csv(time_series_file)
+
+            # Filter by date range if provided
+            if start_date:
+                ts_df = ts_df[ts_df["date"] >= start_date]
+            if end_date:
+                ts_df = ts_df[ts_df["date"] <= end_date]
+
+            if ts_df.empty:
+                continue
+
+            dates = ts_df["date"].tolist()
+            returns = ts_df["return"].tolist()
+            cumulative_returns_list = ts_df["cumulative_return"].tolist()
+
+            # Normalize to 100 at start if requested
+            if normalize_to_100 and len(cumulative_returns_list) > 0:
+                # Convert cumulative returns (0.5 = 50% gain) to normalized values (100 baseline)
+                cumulative_returns_list = [((val + 1) * 100) for val in cumulative_returns_list]
+
+            result[factor] = FactorReturns(
+                factor=factor,
+                dates=dates,
+                returns=returns,
+                cumulative_returns=cumulative_returns_list
+            )
+
+        except Exception as e:
+            print(f"Error loading time series for {factor}: {e}")
+            continue
+
+    return result
+
+
 @app.post("/compute/smb")
 async def compute_smb_factor(config: FactorConfig):
     """
@@ -484,6 +556,14 @@ async def compute_smb_factor(config: FactorConfig):
         "end_date": str(dates_list[-1]) if dates_list else None,
     }
     logger.log_results(factor_model.results_dict)
+
+    # Save full time series to CSV
+    returns_df_ts = cumulative_returns(factor_model.factor_returns)
+    returns_df_ts = returns_df_ts.rename(columns={"value": "return", "cumulative_returns": "cumulative_return"})
+    returns_df_ts["date"] = returns_df_ts["date"].astype(str)
+    time_series_file = FACTOR_LOGS_DIR / f"{config.factor}_{logger.run_id}_returns.csv"
+    returns_df_ts.to_csv(time_series_file, index=False)
+    print(f"Saved time series to {time_series_file}")
 
     return result
 
@@ -653,6 +733,14 @@ async def compute_momentum_factor(
         "end_date": str(dates_list[-1]) if dates_list else None,
     }
     logger.log_results(factor_model.results_dict)
+
+    # Save full time series to CSV
+    returns_df_ts = cumulative_returns(factor_model.factor_returns)
+    returns_df_ts = returns_df_ts.rename(columns={"value": "return", "cumulative_returns": "cumulative_return"})
+    returns_df_ts["date"] = returns_df_ts["date"].astype(str)
+    time_series_file = FACTOR_LOGS_DIR / f"{config.factor}_{logger.run_id}_returns.csv"
+    returns_df_ts.to_csv(time_series_file, index=False)
+    print(f"Saved time series to {time_series_file}")
 
     return result
 

@@ -13,25 +13,31 @@ interface FactorAnalysisWidgetProps {
     quantity: number;
     asset_type: string | null;
     close_price: number;
+    position_direction?: 'long' | 'short' | null;
   }>;
 }
 
 export function FactorAnalysisWidget({ holdings }: FactorAnalysisWidgetProps) {
   // Calculate holdings values for factor analysis
-  const holdingsWithValues = holdings.map(h => ({
-    ticker: h.ticker,
-    quantity: h.quantity,
-    asset_type: h.asset_type,
-    value: h.close_price * h.quantity,
-  }));
+  const holdingsWithValues = holdings.map(h => {
+    const isShort = h.position_direction === 'short';
+    const effectiveQuantity = h.quantity * (isShort ? -1 : 1);
+    return {
+      ticker: h.ticker,
+      quantity: h.quantity,
+      asset_type: h.asset_type,
+      value: h.close_price * effectiveQuantity,
+      position_direction: h.position_direction,
+    };
+  });
 
   const { data: factorData, isLoading, error } = useFactorAnalysis(holdingsWithValues);
   const filtered = filterHoldingsByCategory(holdingsWithValues);
 
   // Minimum holdings check
-  const hasMinCrypto = filtered.crypto.length >= 5;
-  const hasMinEquity = filtered.equity.length >= 5;
-  const hasMinHoldings = holdings.length >= 5;
+  const hasMinCrypto = filtered.crypto.length >= 3;
+  const hasMinEquity = filtered.equity.length >= 3;
+  const hasMinHoldings = holdings.length >= 3;
 
   if (!hasMinHoldings) {
     return (
@@ -39,7 +45,7 @@ export function FactorAnalysisWidget({ holdings }: FactorAnalysisWidgetProps) {
         <div className="flex items-center gap-2">
           <AlertCircle className="w-4 h-4 text-muted-foreground" />
           <p className="text-[11px] text-muted-foreground">
-            Factor analysis requires at least 5 holdings. You currently have {holdings.length}.
+            Factor analysis requires at least 3 holdings. You currently have {holdings.length}.
           </p>
         </div>
       </Card>
@@ -126,7 +132,7 @@ export function FactorAnalysisWidget({ holdings }: FactorAnalysisWidgetProps) {
               <p className="text-[11px] text-muted-foreground">
                 {hasMinCrypto
                   ? 'No crypto factor data available'
-                  : `Need at least 5 crypto holdings (currently ${filtered.crypto.length})`}
+                  : `Need at least 3 crypto holdings (currently ${filtered.crypto.length})`}
               </p>
             </div>
           )}
@@ -146,7 +152,7 @@ export function FactorAnalysisWidget({ holdings }: FactorAnalysisWidgetProps) {
               <p className="text-[11px] text-muted-foreground">
                 {hasMinEquity
                   ? 'No equity factor data available'
-                  : `Need at least 5 equity holdings (currently ${filtered.equity.length})`}
+                  : `Need at least 3 equity holdings (currently ${filtered.equity.length})`}
               </p>
             </div>
           )}

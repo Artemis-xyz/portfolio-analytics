@@ -39,7 +39,9 @@ export const usePortfolioInsights = (portfolioData: PortfolioData | null, enable
       return data;
     },
     enabled: enabled && portfolioData !== null && portfolioData.holdings.length > 0,
-    staleTime: 5 * 60 * 1000, // 5 minutes
+    staleTime: Infinity, // Never auto-refetch, only manual or on mount
+    refetchOnWindowFocus: false, // Don't refetch when window regains focus
+    refetchOnMount: true, // Refetch on component mount
     retry: 1,
   });
 };
