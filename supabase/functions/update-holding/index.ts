@@ -17,6 +17,7 @@ interface UpdateHoldingRequest {
     ticker?: string;
     asset_type?: string;
     value?: number;
+    position_direction?: 'long' | 'short';
   };
 }
 
@@ -46,6 +47,14 @@ serve(async (req) => {
     if (!updates || Object.keys(updates).length === 0) {
       return new Response(
         JSON.stringify({ error: "No updates provided" }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // Validate quantity must be positive
+    if (updates.quantity !== undefined && updates.quantity < 0) {
+      return new Response(
+        JSON.stringify({ error: "Quantity must be positive. Use position_direction to indicate short positions." }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }

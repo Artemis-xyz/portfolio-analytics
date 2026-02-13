@@ -17,6 +17,7 @@ export interface Holding {
   last_transaction_date: string | null;
   transaction_count: number;
   updated_at: string;
+  position_direction: 'long' | 'short' | null;
 }
 
 export const usePortfolioHoldings = (userId: string | undefined) => {
@@ -116,6 +117,7 @@ export function useCreateHolding() {
         close_price: number;
         cost_basis?: number | null;
         asset_type?: string | null;
+        position_direction?: 'long' | 'short';
       };
       userId: string;
     }) => {
@@ -129,6 +131,7 @@ export function useCreateHolding() {
         cost_basis: holding.cost_basis || null,
         asset_type: holding.asset_type || null,
         institution_name: "Manual Entry",
+        position_direction: holding.position_direction || 'long',
       };
 
       const { data, error } = await supabase.functions.invoke("import-csv-holdings", {

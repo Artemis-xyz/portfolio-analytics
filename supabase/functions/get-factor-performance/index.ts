@@ -15,8 +15,10 @@ serve(async (req) => {
   }
 
   try {
-    const { factors = [], limit = 10 } = await req.json();
-    const cacheKey = `perf:${factors.join(',')}:${limit}`;
+    const { factors = [], limit = 10, get_time_series = false, start_date, end_date } = await req.json();
+    const cacheKey = get_time_series
+      ? `ts:${factors.join(',')}:${start_date}:${end_date}`
+      : `perf:${factors.join(',')}:${limit}`;
 
     // Check cache
     const cached = cache.get(cacheKey);
@@ -27,9 +29,24 @@ serve(async (req) => {
       });
     }
 
+    // Determine endpoint and build URL
+    let apiUrl: string;
+    if (get_time_series) {
+      const params = new URLSearchParams({
+        factors: factors.join(','),
+        normalize_to_100: 'true'
+      });
+      if (start_date) params.append('start_date', start_date);
+      if (end_date) params.append('end_date', end_date);
+      apiUrl = `${FACTORS_API_URL}/factors/time-series?${params}`;
+      console.log(`Fetching time series from ${apiUrl}`);
+    } else {
+      apiUrl = `${FACTORS_API_URL}/factors/compare`;
+      console.log(`Fetching from ${apiUrl}`);
+    }
+
     // Fetch from factors API
-    console.log(`Fetching from ${FACTORS_API_URL}/factors/compare`);
-    const response = await fetch(`${FACTORS_API_URL}/factors/compare`);
+    const response = await fetch(apiUrl);
 
     if (!response.ok) {
       throw new Error(`Factors API error: ${response.status}`);

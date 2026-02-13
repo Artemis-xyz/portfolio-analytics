@@ -35,7 +35,13 @@ export interface FactorAnalysisResult {
  * @returns React Query result with factor analysis data
  */
 export function useFactorAnalysis(
-  holdings: Array<{ asset_type: string | null; ticker: string; quantity: number; value: number }>,
+  holdings: Array<{
+    asset_type: string | null;
+    ticker: string;
+    quantity: number;
+    value: number;
+    position_direction?: 'long' | 'short' | null;
+  }>,
   enabled: boolean = true
 ) {
   const filtered = filterHoldingsByCategory(holdings);
@@ -49,12 +55,17 @@ export function useFactorAnalysis(
         'compute-portfolio-factors',
         {
           body: {
-            holdings: holdings.map(h => ({
-              ticker: h.ticker,
-              asset_type: h.asset_type,
-              quantity: h.quantity,
-              value: h.value,
-            }))
+            holdings: holdings.map(h => {
+              const isShort = h.position_direction === 'short';
+              const effectiveQuantity = h.quantity * (isShort ? -1 : 1);
+              return {
+                ticker: h.ticker,
+                asset_type: h.asset_type,
+                quantity: effectiveQuantity,
+                value: h.value,
+                position_direction: h.position_direction || 'long',
+              };
+            })
           }
         }
       );
@@ -67,7 +78,7 @@ export function useFactorAnalysis(
       console.log('Factor analysis result:', data);
       return data as FactorAnalysisResult;
     },
-    enabled: enabled && holdings.length >= 5,
+    enabled: enabled && holdings.length >= 3,
     staleTime: 5 * 60 * 1000, // 5 minutes
     cacheTime: 10 * 60 * 1000, // 10 minutes
     retry: 1,
