@@ -7,7 +7,6 @@ import { ThemeProvider } from "next-themes";
 import { PrivyProvider } from '@privy-io/react-auth';
 import { privyConfig } from '@/lib/privy';
 import Portfolio from "./pages/Portfolio";
-import Factors from "./pages/Analytics";
 import Auth from "./pages/Auth";
 import NotFound from "./pages/NotFound";
 
@@ -23,7 +22,6 @@ const App = () => (
           <BrowserRouter>
             <Routes>
               <Route path="/" element={<Portfolio />} />
-              <Route path="/factors" element={<Factors />} />
               <Route path="/auth" element={<Auth />} />
               {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
               <Route path="*" element={<NotFound />} />

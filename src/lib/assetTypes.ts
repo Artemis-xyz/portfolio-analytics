@@ -143,3 +143,82 @@ export function getDominantCategory<T extends { asset_type: string | null; value
 
   return categoryValues.sort((a, b) => b.percent - a.percent)[0].category;
 }
+
+/**
+ * Common crypto ticker symbols
+ */
+const CRYPTO_TICKERS = new Set([
+  'BTC', 'ETH', 'SOL', 'ADA', 'DOT', 'AVAX', 'MATIC', 'LINK', 'UNI', 'AAVE',
+  'XRP', 'LTC', 'BCH', 'DOGE', 'SHIB', 'ATOM', 'ALGO', 'XLM', 'VET', 'FIL',
+  'TRX', 'ETC', 'XMR', 'NEAR', 'APT', 'SUI', 'ARB', 'OP', 'INJ', 'SEI',
+  'PEPE', 'WIF', 'BONK', 'JTO', 'PYTH', 'JUP', 'WLD', 'TIA', 'DYM', 'STRK'
+]);
+
+/**
+ * Common ETF ticker patterns
+ */
+const ETF_PATTERNS = [
+  /^SPY$/i, /^QQQ$/i, /^IWM$/i, /^DIA$/i, /^VTI$/i, /^VOO$/i, /^VEA$/i,
+  /^VWO$/i, /^AGG$/i, /^BND$/i, /^TLT$/i, /^GLD$/i, /^SLV$/i, /^USO$/i,
+  /^ARKK$/i, /^ARKG$/i, /^ARKW$/i, /^XLF$/i, /^XLE$/i, /^XLK$/i
+];
+
+/**
+ * Auto-detects the asset type based on ticker symbol and security name
+ *
+ * @param ticker - The ticker symbol (e.g., "AAPL", "BTC-USD", "SPY")
+ * @param securityName - Optional security name for additional context
+ * @returns The detected AssetCategory
+ */
+export function detectAssetType(
+  ticker: string | null | undefined,
+  securityName?: string | null
+): AssetCategory {
+  if (!ticker) return AssetCategory.OTHER;
+
+  const tickerUpper = ticker.toUpperCase().trim();
+  const nameUpper = securityName?.toUpperCase() || '';
+
+  // Check for crypto patterns
+  // Pattern: BTC-USD, ETH-USDT, SOL-PERP, etc.
+  if (tickerUpper.includes('-USD') || tickerUpper.includes('-USDT') ||
+      tickerUpper.includes('-USDC') || tickerUpper.includes('-PERP')) {
+    return AssetCategory.CRYPTO;
+  }
+
+  // Check if base ticker is a known crypto
+  const baseTicker = tickerUpper.split('-')[0].split('/')[0];
+  if (CRYPTO_TICKERS.has(baseTicker)) {
+    return AssetCategory.CRYPTO;
+  }
+
+  // Check security name for crypto indicators
+  if (nameUpper.includes('BITCOIN') || nameUpper.includes('ETHEREUM') ||
+      nameUpper.includes('CRYPTO') || nameUpper.includes('SOLANA')) {
+    return AssetCategory.CRYPTO;
+  }
+
+  // Check for ETF patterns
+  if (ETF_PATTERNS.some(pattern => pattern.test(tickerUpper))) {
+    return AssetCategory.ETF;
+  }
+
+  // Check security name for ETF indicators
+  if (nameUpper.includes('ETF') || nameUpper.includes('FUND') ||
+      nameUpper.includes('INDEX')) {
+    return AssetCategory.ETF;
+  }
+
+  // Check for bond indicators
+  if (nameUpper.includes('BOND') || nameUpper.includes('TREASURY') ||
+      nameUpper.includes('FIXED INCOME')) {
+    return AssetCategory.FIXED_INCOME;
+  }
+
+  // Default to EQUITY for standard ticker formats (1-5 uppercase letters)
+  if (/^[A-Z]{1,5}$/.test(tickerUpper)) {
+    return AssetCategory.EQUITY;
+  }
+
+  return AssetCategory.OTHER;
+}

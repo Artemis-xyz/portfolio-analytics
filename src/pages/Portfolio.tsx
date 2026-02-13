@@ -4,13 +4,15 @@ import { useAuth } from "@/hooks/useAuth";
 import { usePortfolioHoldings, useUpdateHolding, useDeleteHolding, useCreateHolding, Holding } from "@/hooks/usePortfolio";
 import { use24hPrices, type TimeframeKey } from "@/hooks/use24hPrices";
 import { usePortfolioInsights } from "@/hooks/usePortfolioInsights";
-import { filterHoldingsByCategory } from "@/lib/assetTypes";
+import { useFactorTimeSeries } from "@/hooks/useFactorTimeSeries";
+import { filterHoldingsByCategory, detectAssetType } from "@/lib/assetTypes";
 import { FactorAnalysisWidget } from "@/components/factors/FactorAnalysisWidget";
 import { Navigate } from "react-router-dom";
 import { Loader2, Trash2, Upload, FileSpreadsheet, X, Download, TrendingUp, TrendingDown, DollarSign, BarChart3, Layers, ChevronDown, Pencil, Check, Sparkles, Plus } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import ReactMarkdown from "react-markdown";
 import {
   XAxis,
   YAxis,
@@ -271,6 +273,7 @@ interface CsvRow {
   value: number;
   cost_basis: number | null;
   asset_type: string | null;
+  position_direction: 'long' | 'short';
 }
 
 function parseCsv(text: string): CsvRow[] {
@@ -288,6 +291,7 @@ function parseCsv(text: string): CsvRow[] {
   const valueIdx = headers.findIndex((h) => ["value", "market_value", "total_value", "current_value"].includes(h));
   const costIdx = headers.findIndex((h) => ["cost_basis", "cost", "total_cost", "average_cost", "avg_cost"].includes(h));
   const typeIdx = headers.findIndex((h) => ["type", "asset_type", "asset_class", "category"].includes(h));
+  const directionIdx = headers.findIndex((h) => ["direction", "side", "position", "position_type", "long_short"].includes(h));
 
   if (nameIdx === -1 && tickerIdx === -1) {
     throw new Error("CSV must have at least a 'name' or 'ticker' column");
@@ -308,6 +312,11 @@ function parseCsv(text: string): CsvRow[] {
       return parseFloat(cols[idx].replace(/[$,]/g, "")) || 0;
     };
 
+    const parseDirection = (val: string): 'long' | 'short' => {
+      const lower = val.toLowerCase().trim();
+      return ['short', 's', 'sell', 'sold'].includes(lower) ? 'short' : 'long';
+    };
+
     const qty = parseNum(qtyIdx);
     const price = parseNum(priceIdx);
     const explicitValue = parseNum(valueIdx);
@@ -321,6 +330,7 @@ function parseCsv(text: string): CsvRow[] {
       value,
       cost_basis: costIdx !== -1 ? (parseNum(costIdx) || null) : null,
       asset_type: typeIdx !== -1 ? (cols[typeIdx] || null) : null,
+      position_direction: directionIdx !== -1 ? parseDirection(cols[directionIdx]) : 'long',
     });
   }
 
@@ -385,10 +395,11 @@ const CsvImportModal = ({
   };
 
   const handleDownloadTemplate = () => {
-    const template = `name,ticker,quantity,price,value,cost_basis,type
-"Apple Inc",AAPL,10,185.50,1855.00,1500.00,equity
-"Bitcoin",BTC,0.5,43000.00,21500.00,20000.00,crypto
-"Vanguard S&P 500 ETF",VOO,25,420.00,10500.00,9800.00,etf`;
+    const template = `name,ticker,quantity,price,value,cost_basis,type,direction
+"Apple Inc",AAPL,10,185.50,1855.00,1500.00,equity,long
+"Tesla Inc",TSLA,5,250.00,1250.00,1300.00,equity,short
+"Bitcoin",BTC,0.5,43000.00,21500.00,20000.00,crypto,long
+"Vanguard S&P 500 ETF",VOO,25,420.00,10500.00,9800.00,etf,long`;
     const blob = new Blob([template], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -582,6 +593,7 @@ const Portfolio = () => {
     quantity: '',
     close_price: '',
     cost_basis: '',
+    position_direction: 'long' as 'long' | 'short',
   });
   const [isAddingNew, setIsAddingNew] = useState(false);
   const [newHoldingForm, setNewHoldingForm] = useState({
@@ -589,6 +601,7 @@ const Portfolio = () => {
     ticker: '',
     quantity: '',
     asset_type: '',
+    position_direction: 'long' as 'long' | 'short',
   });
   const queryClient = useQueryClient();
 
@@ -606,14 +619,48 @@ const Portfolio = () => {
   }, [holdings]);
   const { data: priceData, isLoading: pricesLoading } = use24hPrices(tickers, timeframe);
 
+  // Determine which factors to show based on portfolio composition
+  const portfolioStats = useMemo(() => {
+    if (!holdings || holdings.length === 0) return { cryptoPercent: 0, equityPercent: 0 };
+
+    let cryptoValue = 0;
+    let equityValue = 0;
+
+    holdings.forEach((h) => {
+      const value = h.value || 0;
+      if (h.asset_type === 'Crypto') {
+        cryptoValue += value;
+      } else {
+        equityValue += value;
+      }
+    });
+
+    const totalValue = cryptoValue + equityValue;
+    return {
+      cryptoPercent: totalValue > 0 ? (cryptoValue / totalValue) * 100 : 0,
+      equityPercent: totalValue > 0 ? (equityValue / totalValue) * 100 : 0,
+    };
+  }, [holdings]);
+
+  // Fetch factor time series data
+  const factorsToShow = ["smb", "market", "value", "momentum", "momentum_v2", "growth"];
+  const { data: factorTimeSeriesData } = useFactorTimeSeries(
+    factorsToShow,
+    undefined, // Will use all available dates
+    undefined,
+    holdings !== undefined && holdings.length >= 3 // Only fetch if enough holdings for factor analysis
+  );
+
   // Calculate total value and PNL using live prices when available
   const { totalValue, total24hPnl } = useMemo(() => {
     return holdings?.reduce((acc, h) => {
       const tickerUpper = h.ticker?.toUpperCase();
       const pd = tickerUpper && priceData ? priceData[tickerUpper] : null;
+      const isShort = h.position_direction === 'short';
+      const effectiveQuantity = h.quantity * (isShort ? -1 : 1);
       const livePrice = pd ? pd.price : null;
-      const value = livePrice != null ? livePrice * h.quantity : h.value;
-      const pnl24h = pd ? pd.change * h.quantity : 0;
+      const value = livePrice != null ? livePrice * effectiveQuantity : h.value;
+      const pnl24h = pd ? pd.change * effectiveQuantity : 0;
 
       return {
         totalValue: acc.totalValue + value,
@@ -637,12 +684,14 @@ const Portfolio = () => {
     for (const h of holdings) {
       const ticker = h.ticker?.toUpperCase();
       const pd = ticker && priceData ? priceData[ticker] : null;
+      const isShort = h.position_direction === 'short';
+      const effectiveQuantity = h.quantity * (isShort ? -1 : 1);
 
       const livePrice = pd?.price ?? h.close_price;
-      const currentValue = livePrice * h.quantity;
+      const currentValue = livePrice * effectiveQuantity;
 
       if (pd) {
-        const positionPnl = pd.change * h.quantity;
+        const positionPnl = pd.change * effectiveQuantity;
         if (positionPnl >= 0) holdingsWithGain++;
         else holdingsWithLoss++;
       }
@@ -694,12 +743,13 @@ const Portfolio = () => {
       const pd = ticker && priceData[ticker];
       if (!pd?.timeSeries || pd.timeSeries.length === 0) return;
 
-      const quantity = h.quantity;
-      totalValue += pd.price * quantity;
+      const isShort = h.position_direction === 'short';
+      const effectiveQuantity = h.quantity * (isShort ? -1 : 1);
+      totalValue += pd.price * effectiveQuantity;
 
       pd.timeSeries.forEach((point) => {
         const current = dateMap.get(point.date) || 0;
-        dateMap.set(point.date, current + point.price * quantity);
+        dateMap.set(point.date, current + point.price * effectiveQuantity);
       });
     });
 
@@ -767,11 +817,12 @@ const Portfolio = () => {
       const pd = ticker && priceData[ticker];
       if (!pd?.timeSeries || pd.timeSeries.length === 0) return;
 
-      const quantity = h.quantity;
+      const isShort = h.position_direction === 'short';
+      const effectiveQuantity = h.quantity * (isShort ? -1 : 1);
 
       pd.timeSeries.forEach((point) => {
         const current = dateMap.get(point.date) || 0;
-        dateMap.set(point.date, current + point.price * quantity);
+        dateMap.set(point.date, current + point.price * effectiveQuantity);
       });
     });
 
@@ -844,8 +895,58 @@ const Portfolio = () => {
       BTC: ((point.btc! / btcBase) * 100),
     }));
 
+    // Add factor data if available
+    if (factorTimeSeriesData) {
+      // Get all unique dates from factors
+      const factorDates = new Set<string>();
+      Object.values(factorTimeSeriesData).forEach((factorData) => {
+        factorData.dates.forEach((d) => factorDates.add(d));
+      });
+
+      // Merge factor dates into existing dates
+      const allDatesWithFactors = new Set([...normalizedData.map(p => p.date), ...factorDates]);
+      const sortedAllDates = Array.from(allDatesWithFactors).sort();
+
+      // Create factor maps
+      const factorMaps = new Map<string, Map<string, number>>();
+      for (const [factorName, factorData] of Object.entries(factorTimeSeriesData)) {
+        const factorMap = new Map<string, number>();
+        factorData.dates.forEach((date, idx) => {
+          factorMap.set(date, factorData.cumulative_returns[idx]);
+        });
+        factorMaps.set(factorName, factorMap);
+      }
+
+      // Build output with factors
+      const output: any[] = [];
+      const portfolioMap = new Map(normalizedData.map(p => [p.date, p]));
+
+      for (const date of sortedAllDates) {
+        const portfolioPoint = portfolioMap.get(date);
+        if (!portfolioPoint) continue; // Only include dates where we have portfolio data
+
+        const point: any = { ...portfolioPoint };
+
+        // Add factor values
+        for (const [factorName, factorMap] of factorMaps.entries()) {
+          const factorValue = factorMap.get(date);
+          if (factorValue !== undefined) {
+            point[factorName] = factorValue;
+          } else {
+            // Forward-fill: use last known value
+            const prevDate = Array.from(factorMap.keys()).reverse().find(d => d < date);
+            point[factorName] = prevDate ? factorMap.get(prevDate)! : null;
+          }
+        }
+
+        output.push(point);
+      }
+
+      return output;
+    }
+
     return normalizedData;
-  }, [holdings, priceData]);
+  }, [holdings, priceData, factorTimeSeriesData]);
 
   // Prepare portfolio data for AI insights
   const portfolioDataForInsights = useMemo(() => {
@@ -881,7 +982,7 @@ const Portfolio = () => {
   }, [holdings, stats, priceData, totalValue, riskMetrics]);
 
   // Fetch AI insights
-  const { data: insightsData, isLoading: insightsLoading, error: insightsError } = usePortfolioInsights(
+  const { data: insightsData, isLoading: insightsLoading, error: insightsError, refetch: refetchInsights } = usePortfolioInsights(
     portfolioDataForInsights,
     holdings !== undefined && holdings.length > 0
   );
@@ -892,6 +993,7 @@ const Portfolio = () => {
       quantity: holding.quantity.toString(),
       close_price: holding.close_price.toString(),
       cost_basis: holding.cost_basis?.toString() || '',
+      position_direction: holding.position_direction || 'long',
     });
   };
 
@@ -903,6 +1005,7 @@ const Portfolio = () => {
       if (editForm.quantity) updates.quantity = parseFloat(editForm.quantity);
       if (editForm.close_price) updates.close_price = parseFloat(editForm.close_price);
       if (editForm.cost_basis) updates.cost_basis = parseFloat(editForm.cost_basis);
+      if (editForm.position_direction) updates.position_direction = editForm.position_direction;
 
       // Recalculate value
       if (updates.quantity !== undefined && updates.close_price !== undefined) {
@@ -917,7 +1020,7 @@ const Portfolio = () => {
 
       toast.success('Holding updated');
       setEditingId(null);
-      setEditForm({ quantity: '', close_price: '', cost_basis: '' });
+      setEditForm({ quantity: '', close_price: '', cost_basis: '', position_direction: 'long' });
     } catch (err: any) {
       console.error('Update error:', err);
       toast.error(err.message || 'Failed to update holding');
@@ -985,16 +1088,40 @@ const Portfolio = () => {
     const ticker = newHoldingForm.ticker.trim().toUpperCase();
     let price = 0;
 
+    // Check if prices are still loading
+    if (pricesLoading) {
+      toast.error('Loading price data... Please wait a moment and try again.');
+      return;
+    }
+
     if (priceData && priceData[ticker]) {
       price = priceData[ticker].price;
     }
 
     if (price <= 0) {
-      toast.error('Unable to fetch price for this ticker. Please verify the ticker symbol.');
+      toast.error(`Unable to fetch price for ${ticker}. This might be due to:\n• Invalid ticker symbol\n• Market data not available\n• API rate limits\n\nPlease verify the ticker and try again.`);
+      return;
+    }
+
+    // Check for duplicate holdings
+    const duplicate = holdings?.find(h =>
+      h.ticker?.toUpperCase() === ticker &&
+      h.position_direction === newHoldingForm.position_direction
+    );
+
+    if (duplicate) {
+      toast.error(
+        `You already have a ${newHoldingForm.position_direction} position in ${ticker}. ` +
+        `Edit the existing holding to adjust quantity or other details.`
+      );
       return;
     }
 
     try {
+      // Auto-detect asset type if not provided
+      const assetType = newHoldingForm.asset_type.trim() ||
+                       detectAssetType(ticker, newHoldingForm.security_name.trim());
+
       await createHolding.mutateAsync({
         holding: {
           security_name: newHoldingForm.security_name.trim(),
@@ -1002,7 +1129,8 @@ const Portfolio = () => {
           quantity: parseFloat(newHoldingForm.quantity),
           close_price: price,
           cost_basis: null,
-          asset_type: newHoldingForm.asset_type.trim() || null,
+          asset_type: assetType,
+          position_direction: newHoldingForm.position_direction,
         },
         userId: user.id,
       });
@@ -1014,6 +1142,7 @@ const Portfolio = () => {
         ticker: '',
         quantity: '',
         asset_type: '',
+        position_direction: 'long' as 'long' | 'short',
       });
     } catch (err: any) {
       console.error('Create error:', err);
@@ -1041,6 +1170,7 @@ const Portfolio = () => {
           cost_basis: r.cost_basis,
           asset_type: r.asset_type?.slice(0, 50) || null,
           institution_name: "CSV Import",
+          position_direction: r.position_direction,
         }));
 
         requestBody = {
@@ -1061,7 +1191,9 @@ const Portfolio = () => {
         broker,
         parseMode,
         privyUserId: user.id,
-        dataLength: csvText.length,
+        dataType: typeof requestBody.data,
+        dataLength: requestBody.data.length,
+        holdingsCount: parseMode === 'holdings' ? JSON.parse(requestBody.data).length : 'N/A'
       });
 
       const { data, error } = await supabase.functions.invoke('import-csv-holdings', {
@@ -1074,13 +1206,50 @@ const Portfolio = () => {
       console.log('📥 Edge function response:', { data, error });
 
       if (error) {
-        console.error('Edge function error details:', error);
-        throw new Error(`Edge function error: ${error.message || JSON.stringify(error)}`);
+        console.error('📥 Edge function response:', { data, error });
+
+        // Try to extract structured error from response
+        let errorMessage = 'Failed to import CSV';
+        let errorCode = 'UNKNOWN';
+
+        if (error.message) {
+          errorMessage = error.message;
+        }
+
+        // If data contains structured error info, extract it
+        if (data?.errorCode) {
+          errorCode = data.errorCode;
+          errorMessage = data.error || errorMessage;
+        }
+
+        // Map error codes to user-friendly messages
+        const errorMessages: Record<string, string> = {
+          MISSING_PRIVY_USER_ID: 'Authentication error. Please log out and log back in.',
+          INVALID_REQUEST_BODY: 'Invalid CSV format. Please check your file.',
+          EMPTY_HOLDINGS: 'No holdings found in the CSV file.',
+          CSV_PARSE_ERROR: 'Failed to parse CSV file. Please verify the format matches the selected broker.',
+          ENV_VARS_MISSING: 'Server configuration error. Please contact support.',
+          USER_LOOKUP_ERROR: 'Failed to lookup user account. Please try again.',
+          USER_CREATE_ERROR: 'Failed to create user account. Please try again or contact support.',
+          MAPPING_CREATE_ERROR: 'Failed to create user mapping. Please contact support.',
+          INSERT_ERROR: 'Failed to save holdings. Please try again.',
+          UNKNOWN_ERROR: 'An unknown error occurred. Please try again.',
+        };
+
+        // Show user-friendly message
+        toast.error(errorMessages[errorCode] || errorMessage);
+
+        // Log full details for debugging
+        console.error('Full error details:', { error, data, requestBody, errorCode });
+
+        return;
       }
 
       if (!data?.success) {
         console.error('Import failed:', data);
-        throw new Error(data?.error || 'Import failed');
+        const errorMsg = data?.error || 'Import failed';
+        toast.error(errorMsg);
+        return;
       }
 
       const brokerLabel = BROKER_CONFIGS.find(c => c.id === broker)?.label || broker;
@@ -1093,6 +1262,10 @@ const Portfolio = () => {
       }
 
       queryClient.invalidateQueries({ queryKey: ["holdings"] });
+      // Trigger insights refresh after successful import
+      setTimeout(() => {
+        queryClient.invalidateQueries({ queryKey: ["portfolio-insights"] });
+      }, 1000); // Small delay to ensure holdings are loaded first
     } catch (err: any) {
       console.error('CSV import error:', err);
       toast.error(err.message || "Failed to import CSV");
@@ -1189,6 +1362,7 @@ const Portfolio = () => {
                         <th className="text-right text-[10px] font-medium text-table-header uppercase tracking-wider px-3 py-2">Value</th>
                         <th className="text-right text-[10px] font-medium text-table-header uppercase tracking-wider px-3 py-2">PNL</th>
                         <th className="text-left text-[10px] font-medium text-table-header uppercase tracking-wider px-3 py-2">Type</th>
+                        <th className="text-left text-[10px] font-medium text-table-header uppercase tracking-wider px-3 py-2">Direction</th>
                         <th className="text-left text-[10px] font-medium text-table-header uppercase tracking-wider px-3 py-2">Broker</th>
                         <th className="text-center text-[10px] font-medium text-table-header uppercase tracking-wider px-3 py-2">Actions</th>
                       </tr>
@@ -1232,16 +1406,20 @@ const Portfolio = () => {
                             />
                           </td>
 
-                          {/* Price */}
-                          <td className="px-3 py-1.5">
-                            <input
-                              type="number"
-                              step="0.01"
-                              placeholder="185.50"
-                              value={newHoldingForm.close_price}
-                              onChange={(e) => setNewHoldingForm({ ...newHoldingForm, close_price: e.target.value })}
-                              className="w-24 px-2 py-1 text-[11px] text-right border border-border rounded bg-background"
-                            />
+                          {/* Price (API-fetched) */}
+                          <td className="text-right px-3 py-1.5">
+                            <span className="text-[11px] text-muted-foreground tabular-nums flex items-center justify-end gap-1">
+                              {(() => {
+                                const ticker = newHoldingForm.ticker.trim().toUpperCase();
+                                if (pricesLoading && ticker.length >= 2) {
+                                  return <><Loader2 className="w-3 h-3 animate-spin" /> Loading...</>;
+                                }
+                                if (ticker && priceData && priceData[ticker]) {
+                                  return formatUsd(priceData[ticker].price);
+                                }
+                                return ticker.length >= 2 ? 'Enter ticker' : '—';
+                              })()}
+                            </span>
                           </td>
 
                           {/* Value (calculated) */}
@@ -1253,21 +1431,11 @@ const Portfolio = () => {
                                 if (qty > 0 && ticker && priceData && priceData[ticker]) {
                                   return formatUsd(qty * priceData[ticker].price);
                                 }
-                                : '—'}
+                                return '—';
+                              })()}
                             </span>
                           </td>
 
-                          {/* Cost Basis */}
-                          <td className="px-3 py-1.5">
-                            <input
-                              type="number"
-                              step="0.01"
-                              placeholder="1500.00"
-                              value={newHoldingForm.cost_basis}
-                              onChange={(e) => setNewHoldingForm({ ...newHoldingForm, cost_basis: e.target.value })}
-                              className="w-24 px-2 py-1 text-[11px] text-right border border-border rounded bg-background"
-                            />
-                          </td>
 
                           {/* PNL */}
                           <td className="text-right px-3 py-1.5">
@@ -1285,6 +1453,18 @@ const Portfolio = () => {
                             />
                           </td>
 
+                          {/* Direction */}
+                          <td className="px-3 py-1.5">
+                            <select
+                              value={newHoldingForm.position_direction}
+                              onChange={(e) => setNewHoldingForm({ ...newHoldingForm, position_direction: e.target.value as 'long' | 'short' })}
+                              className="w-20 px-2 py-1 text-[11px] border border-border rounded bg-background"
+                            >
+                              <option value="long">Long</option>
+                              <option value="short">Short</option>
+                            </select>
+                          </td>
+
                           {/* Broker */}
                           <td className="text-[11px] text-muted-foreground px-3 py-1.5">
                             Manual Entry
@@ -1295,11 +1475,11 @@ const Portfolio = () => {
                             <div className="flex items-center justify-center gap-1">
                               <button
                                 onClick={handleSaveNew}
-                                disabled={createHolding.isPending}
+                                disabled={createHolding.isPending || pricesLoading}
                                 className="p-1 text-positive hover:bg-positive/10 rounded disabled:opacity-50"
-                                title="Save"
+                                title={pricesLoading ? "Loading prices..." : "Save"}
                               >
-                                {createHolding.isPending ? (
+                                {createHolding.isPending || pricesLoading ? (
                                   <Loader2 className="w-3.5 h-3.5 animate-spin" />
                                 ) : (
                                   <Check className="w-3.5 h-3.5" />
@@ -1321,13 +1501,15 @@ const Portfolio = () => {
                         const isEditing = editingId === h.id;
                         const tickerUpper = h.ticker?.toUpperCase() || "";
                         const pd = tickerUpper && priceData ? priceData[tickerUpper] : null;
+                        const isShort = h.position_direction === 'short';
+                        const effectiveQuantity = h.quantity * (isShort ? -1 : 1);
                         const pnlPct = pd ? pd.changePct : null;
-                        const pnlDollar = pd ? pd.change * h.quantity : null;
+                        const pnlDollar = pd ? pd.change * effectiveQuantity : null;
                         const livePrice = pd ? pd.price : null;
-                        const currentValue = livePrice != null ? livePrice * h.quantity : h.value;
+                        const currentValue = livePrice != null ? livePrice * effectiveQuantity : h.value;
 
                         return (
-                          <tr key={h.id} className="hover:bg-secondary/20 transition-colors">
+                          <tr key={h.id} className={`hover:bg-secondary/20 transition-colors ${h.position_direction === 'short' ? 'border-l-2 border-l-amber-500' : ''}`}>
                             {/* Name */}
                             <td className="px-3 py-1.5">
                               <div className="flex flex-col">
@@ -1381,22 +1563,6 @@ const Portfolio = () => {
                               </span>
                             </td>
 
-                            {/* Cost Basis (editable) */}
-                            <td className="text-right px-3 py-1.5">
-                              {isEditing ? (
-                                <input
-                                  type="number"
-                                  step="0.01"
-                                  value={editForm.cost_basis}
-                                  onChange={(e) => setEditForm({ ...editForm, cost_basis: e.target.value })}
-                                  className="w-24 px-1 py-0.5 text-[11px] text-right border border-border rounded bg-background"
-                                />
-                              ) : (
-                                <span className="text-[11px] text-muted-foreground tabular-nums">
-                                  {h.cost_basis ? formatUsd(h.cost_basis) : '—'}
-                                </span>
-                              )}
-                            </td>
 
                             {/* PNL */}
                             <td className="text-right px-3 py-1.5 tabular-nums">
@@ -1415,6 +1581,28 @@ const Portfolio = () => {
                             {/* Type */}
                             <td className="text-[11px] text-muted-foreground px-3 py-1.5">
                               {h.asset_type || "—"}
+                            </td>
+
+                            {/* Direction */}
+                            <td className="px-3 py-1.5">
+                              {isEditing ? (
+                                <select
+                                  value={editForm.position_direction}
+                                  onChange={(e) => setEditForm({ ...editForm, position_direction: e.target.value as 'long' | 'short' })}
+                                  className="w-20 px-2 py-1 text-[11px] border border-border rounded bg-background"
+                                >
+                                  <option value="long">Long</option>
+                                  <option value="short">Short</option>
+                                </select>
+                              ) : (
+                                <span className={`text-[11px] px-2 py-0.5 rounded ${
+                                  h.position_direction === 'short'
+                                    ? 'bg-amber-500/10 text-amber-600 dark:text-amber-500'
+                                    : 'text-muted-foreground'
+                                }`}>
+                                  {h.position_direction === 'short' ? 'Short' : 'Long'}
+                                </span>
+                              )}
                             </td>
 
                             {/* Broker */}
@@ -1436,7 +1624,7 @@ const Portfolio = () => {
                                   <button
                                     onClick={() => {
                                       setEditingId(null);
-                                      setEditForm({ quantity: '', close_price: '', cost_basis: '' });
+                                      setEditForm({ quantity: '', close_price: '', cost_basis: '', position_direction: 'long' });
                                     }}
                                     className="p-1 text-muted-foreground hover:bg-secondary/50 rounded"
                                     title="Cancel"
@@ -1530,7 +1718,20 @@ const Portfolio = () => {
                         />
                       </div>
                       <div>
-                        
+                        <label className="text-[10px] text-table-header uppercase block mb-1">Price (Auto-fetched)</label>
+                        <div className="w-full px-2 py-1.5 text-[11px] border border-border rounded bg-secondary/30 text-foreground flex items-center gap-2">
+                          {(() => {
+                            const ticker = newHoldingForm.ticker.trim().toUpperCase();
+                            if (pricesLoading && ticker.length >= 2) {
+                              return <><Loader2 className="w-3 h-3 animate-spin" /> Loading price data...</>;
+                            }
+                            if (ticker && priceData && priceData[ticker]) {
+                              return formatUsd(priceData[ticker].price);
+                            }
+                            return ticker.length >= 2 ? 'Enter valid ticker' : '—';
+                          })()}
+                        </div>
+                      </div>
                       <div>
                         <label className="text-[10px] text-table-header uppercase block mb-1">Asset Type</label>
                         <input
@@ -1545,13 +1746,18 @@ const Portfolio = () => {
                     <div className="flex items-center gap-2 mt-4">
                       <button
                         onClick={handleSaveNew}
-                        disabled={createHolding.isPending}
+                        disabled={createHolding.isPending || pricesLoading}
                         className="px-3 py-1.5 text-[12px] font-medium bg-foreground text-background rounded-md hover:opacity-90 transition-opacity disabled:opacity-50"
                       >
                         {createHolding.isPending ? (
                           <span className="flex items-center gap-1.5">
                             <Loader2 className="w-3 h-3 animate-spin" />
                             Adding...
+                          </span>
+                        ) : pricesLoading ? (
+                          <span className="flex items-center gap-1.5">
+                            <Loader2 className="w-3 h-3 animate-spin" />
+                            Loading prices...
                           </span>
                         ) : (
                           'Add Asset'
@@ -1588,9 +1794,12 @@ const Portfolio = () => {
                 {/* Performance Comparison Chart */}
                 {comparisonChartData.length > 0 && (
                   <div className="border border-border rounded-md p-3">
-                    <h2 className="text-[11px] font-medium text-table-header uppercase tracking-wider mb-3">
-                      Portfolio Performance vs Benchmarks (Normalized to 100)
+                    <h2 className="text-[11px] font-medium text-table-header uppercase tracking-wider mb-2">
+                      Portfolio Performance vs Benchmarks{factorTimeSeriesData && Object.keys(factorTimeSeriesData).length > 0 && ` & Factors (${portfolioStats.cryptoPercent > 50 ? 'Crypto' : 'Equity'})`}
                     </h2>
+                    <p className="text-[10px] text-muted-foreground mb-3">
+                      Normalized to 100.{factorTimeSeriesData && Object.keys(factorTimeSeriesData).length > 0 && ` Showing ${Object.keys(factorTimeSeriesData).length} factor time series.`}
+                    </p>
                     <div className="h-[320px]">
                       <ResponsiveContainer width="100%" height="100%">
                         <LineChart data={comparisonChartData} margin={{ left: 8, right: 8, top: 8, bottom: 8 }}>
@@ -1661,6 +1870,32 @@ const Portfolio = () => {
                             dot={false}
                             activeDot={{ r: 4 }}
                           />
+                          {/* Factor Lines - only show if data available */}
+                          {factorTimeSeriesData && Object.keys(factorTimeSeriesData).map((factorName, idx) => {
+                            // Color scheme for factors (6 distinct colors)
+                            const factorColors = [
+                              "hsl(280, 67%, 55%)",  // purple - SMB
+                              "hsl(0, 72%, 55%)",     // red - Market
+                              "hsl(180, 60%, 45%)",   // cyan - Value
+                              "hsl(330, 70%, 50%)",   // pink - Momentum
+                              "hsl(60, 70%, 45%)",    // yellow-green - Momentum V2
+                              "hsl(200, 80%, 50%)",   // light blue - Growth
+                            ];
+
+                            return (
+                              <Line
+                                key={factorName}
+                                type="monotone"
+                                dataKey={factorName}
+                                stroke={factorColors[idx % factorColors.length]}
+                                strokeWidth={1.5}
+                                strokeOpacity={0.8}
+                                dot={false}
+                                activeDot={{ r: 3 }}
+                                name={factorName.replace('_', ' ').toUpperCase()}
+                              />
+                            );
+                          })}
                         </LineChart>
                       </ResponsiveContainer>
                     </div>
@@ -1723,11 +1958,25 @@ const Portfolio = () => {
 
                 {/* AI Portfolio Insights */}
                 <div className="border border-border rounded-md p-4 bg-gradient-to-br from-secondary/30 to-secondary/10">
-                  <div className="flex items-center gap-2 mb-3">
-                    <Sparkles className="w-4 h-4 text-primary" />
-                    <h2 className="text-[11px] font-medium text-table-header uppercase tracking-wider">
-                      AI Portfolio Insights
-                    </h2>
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-2">
+                      <Sparkles className="w-4 h-4 text-primary" />
+                      <h2 className="text-[11px] font-medium text-table-header uppercase tracking-wider">
+                        AI Portfolio Insights
+                      </h2>
+                    </div>
+                    {!insightsLoading && holdings && holdings.length > 0 && (
+                      <button
+                        onClick={() => {
+                          queryClient.invalidateQueries({ queryKey: ["portfolio-insights"] });
+                        }}
+                        className="flex items-center gap-1 px-2 py-1 text-[10px] text-muted-foreground hover:text-foreground transition-colors rounded hover:bg-secondary/50"
+                        title="Refresh insights"
+                      >
+                        <Sparkles className="w-3 h-3" />
+                        Refresh
+                      </button>
+                    )}
                   </div>
 
                   {insightsLoading ? (
@@ -1742,8 +1991,8 @@ const Portfolio = () => {
                       </p>
                     </div>
                   ) : insightsData?.insights ? (
-                    <div className="text-[11px] text-foreground leading-relaxed whitespace-pre-wrap">
-                      {insightsData.insights}
+                    <div className="text-[11px] text-foreground leading-relaxed prose prose-sm dark:prose-invert max-w-none prose-headings:text-[12px] prose-headings:font-semibold prose-headings:mt-3 prose-headings:mb-2 prose-p:my-2 prose-ul:my-2 prose-li:my-1 prose-strong:font-semibold prose-strong:text-foreground">
+                      <ReactMarkdown>{insightsData.insights}</ReactMarkdown>
                     </div>
                   ) : (
                     <div className="text-[11px] text-muted-foreground py-2">

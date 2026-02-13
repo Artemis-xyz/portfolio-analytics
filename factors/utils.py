@@ -17,7 +17,10 @@ import yfinance as yf
 from artemis import Artemis
 
 # Env Variables
-dotenv.load_dotenv("../../.env.local")
+# Load .env from multiple possible locations (for local dev and Docker)
+dotenv.load_dotenv("../../.env.local")  # Local dev (Jupyter notebooks)
+dotenv.load_dotenv(".env")  # Docker or current directory
+dotenv.load_dotenv()  # System environment variables (production)
 API_KEY = os.getenv("ARTEMIS_API_KEY")
 
 logger = logging.getLogger(__name__)
@@ -573,12 +576,24 @@ class FactorModel:
         Calculate weighted return for a portfolio based on weighting_method.
 
         Supports: 'equal', 'market_cap', 'inverse_variance'
+
+        Handles short positions by inverting returns where position_direction == 'short'
         """
+        has_direction = "position_direction" in portfolio_df.columns
+
+        # Adjust returns for short positions (invert returns)
+        adjusted_returns = portfolio_df[returns_col].astype(float)
+        if has_direction:
+            adjusted_returns = adjusted_returns.where(
+                portfolio_df["position_direction"] == "long",
+                -adjusted_returns  # Invert for shorts
+            )
+
         if self.weighting_method == "equal":
-            return portfolio_df[returns_col].mean()
+            return adjusted_returns.mean()
         elif self.weighting_method == "market_cap":
             weights = portfolio_df["mc_t_minus_1"].astype(float)
-            numerator = (portfolio_df[returns_col].astype(float) * weights).sum()
+            numerator = (adjusted_returns * weights).sum()
             denominator = weights.sum()
             return numerator / denominator if denominator != 0 else np.nan
         elif self.weighting_method == "inverse_variance":
@@ -587,12 +602,12 @@ class FactorModel:
                     "inverse_variance column not found. Call calculate_variance() first."
                 )
             weights = portfolio_df["inverse_variance"].astype(float)
-            numerator = (portfolio_df[returns_col].astype(float) * weights).sum()
+            numerator = (adjusted_returns * weights).sum()
             denominator = weights.sum()
             return numerator / denominator if denominator != 0 else np.nan
         else:
             # Default to equal weighting
-            return portfolio_df[returns_col].mean()
+            return adjusted_returns.mean()
 
     def get_asset_beta(
         self, asset: str, min_observations: int = 52, asset_type: str = "crypto"
