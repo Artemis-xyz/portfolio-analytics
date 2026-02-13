@@ -15,7 +15,7 @@ const Header = () => {
 
   const navItems = [
     { label: "Portfolio", path: "/" },
-    { label: "Analytics", path: "/analytics" },
+    { label: "Factors", path: "/factors" },
   ];
 
   const isActive = (path: string) => {

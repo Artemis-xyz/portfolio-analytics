@@ -12,87 +12,89 @@ export type Database = {
   __InternalSupabase: {
     PostgrestVersion: "14.1"
   }
+  graphql_public: {
+    Tables: {
+      [_ in never]: never
+    }
+    Views: {
+      [_ in never]: never
+    }
+    Functions: {
+      graphql: {
+        Args: {
+          extensions?: Json
+          operationName?: string
+          query?: string
+          variables?: Json
+        }
+        Returns: Json
+      }
+    }
+    Enums: {
+      [_ in never]: never
+    }
+    CompositeTypes: {
+      [_ in never]: never
+    }
+  }
   public: {
     Tables: {
-      plaid_items: {
-        Row: {
-          access_token: string
-          created_at: string
-          id: string
-          institution_name: string | null
-          item_id: string
-          user_id: string
-        }
-        Insert: {
-          access_token: string
-          created_at?: string
-          id?: string
-          institution_name?: string | null
-          item_id: string
-          user_id: string
-        }
-        Update: {
-          access_token?: string
-          created_at?: string
-          id?: string
-          institution_name?: string | null
-          item_id?: string
-          user_id?: string
-        }
-        Relationships: []
-      }
       portfolio_holdings: {
         Row: {
           asset_type: string | null
+          broker_source: string | null
           close_price: number
           cost_basis: number | null
           id: string
+          import_batch_id: string | null
+          imported_at: string
           institution_name: string | null
-          plaid_item_id: string | null
+          last_transaction_date: string | null
           quantity: number
           security_name: string
           ticker: string | null
+          transaction_count: number
           updated_at: string
           user_id: string
           value: number
         }
         Insert: {
           asset_type?: string | null
+          broker_source?: string | null
           close_price?: number
           cost_basis?: number | null
           id?: string
+          import_batch_id?: string | null
+          imported_at?: string
           institution_name?: string | null
-          plaid_item_id?: string | null
+          last_transaction_date?: string | null
           quantity?: number
           security_name: string
           ticker?: string | null
+          transaction_count?: number
           updated_at?: string
           user_id: string
           value?: number
         }
         Update: {
           asset_type?: string | null
+          broker_source?: string | null
           close_price?: number
           cost_basis?: number | null
           id?: string
+          import_batch_id?: string | null
+          imported_at?: string
           institution_name?: string | null
-          plaid_item_id?: string | null
+          last_transaction_date?: string | null
           quantity?: number
           security_name?: string
           ticker?: string | null
+          transaction_count?: number
           updated_at?: string
           user_id?: string
           value?: number
         }
-        Relationships: [
-          {
-            foreignKeyName: "portfolio_holdings_plaid_item_id_fkey"
-            columns: ["plaid_item_id"]
-            isOneToOne: false
-            referencedRelation: "plaid_items"
-            referencedColumns: ["id"]
-          },
-        ]
+        Relationships: []
       }
       profiles: {
         Row: {
@@ -252,6 +254,9 @@ export type CompositeTypes<
     : never
 
 export const Constants = {
+  graphql_public: {
+    Enums: {},
+  },
   public: {
     Enums: {},
   },

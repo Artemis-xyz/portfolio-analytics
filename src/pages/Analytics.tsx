@@ -217,9 +217,9 @@ const Analytics = () => {
       {/* Page Title */}
       <div className="px-4 py-2 border-b border-border">
         <div className="flex items-center gap-3">
-          <h1 className="text-[13px] font-medium text-foreground">Analytics</h1>
+          <h1 className="text-[13px] font-medium text-foreground">Factors</h1>
           <div className="w-px h-3.5 bg-border" />
-          <p className="text-[13px] text-muted-foreground">Portfolio performance & allocation</p>
+          <p className="text-[13px] text-muted-foreground">Factor analysis & attribution</p>
           <div className="ml-auto">
             <TimeframeDropdown value={timeframe} onChange={setTimeframe} />
           </div>

@@ -5,20 +5,21 @@ export interface PriceData {
   price: number;
   change: number;
   changePct: number;
+  timeSeries?: Array<{ date: string; price: number }>;
 }
 
-export type TimeframeKey = "1D" | "1W" | "1M" | "3M" | "6M" | "YTD";
+export type TimeframeKey = "1W" | "1M" | "3M" | "6M" | "1Y" | "YTD";
 
 const TIMEFRAME_TO_RANGE: Record<TimeframeKey, string> = {
-  "1D": "1d",
   "1W": "5d",
   "1M": "1mo",
   "3M": "3mo",
   "6M": "6mo",
+  "1Y": "1y",
   "YTD": "ytd",
 };
 
-export const use24hPrices = (tickers: string[], timeframe: TimeframeKey = "1D") => {
+export const use24hPrices = (tickers: string[], timeframe: TimeframeKey = "1W") => {
   const validTickers = tickers.filter(Boolean);
   const range = TIMEFRAME_TO_RANGE[timeframe];
 

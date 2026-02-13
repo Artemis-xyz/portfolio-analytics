@@ -1,0 +1,6 @@
+name,ticker,quantity,price,value,cost_basis,type
+Apple Inc,AAPL,10,185.50,1855.00,1500.00,equity
+Microsoft Corp,MSFT,5,420.30,2101.50,1800.00,equity
+Bitcoin,BTC,0.5,95000.00,47500.00,40000.00,cryptocurrency
+Tesla Inc,TSLA,15,245.75,3686.25,3000.00,equity
+Vanguard Total Stock Market ETF,VTI,25,245.80,6145.00,5500.00,etf

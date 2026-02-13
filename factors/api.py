@@ -12,6 +12,7 @@ from typing import Dict, List, Optional
 import numpy as np
 import pandas as pd
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 # Lazy imports for heavy dependencies
@@ -41,6 +42,20 @@ app = FastAPI(
     title="Factor Models API",
     description="API for cryptocurrency factor model analysis",
     version="1.0.0",
+)
+
+# Configure CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "https://rctyagxwbequikcdgkec.supabase.co",
+        "http://localhost:5173",
+        "http://localhost:3000",
+        "http://localhost:8000",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # Constants
@@ -640,6 +655,79 @@ async def compute_momentum_factor(
     logger.log_results(factor_model.results_dict)
 
     return result
+
+
+@app.post("/compute/equity-factors")
+async def compute_equity_factors(
+    tickers: list[str],
+    start_date: str,
+    end_date: str,
+):
+    """
+    Compute factor analysis for equity portfolio.
+
+    This endpoint is an MVP implementation that uses the existing factor comparison data.
+    For a full implementation, it would:
+    1. Fetch equity data for the provided tickers using yfinance
+    2. Compute Fama-French style factors (SMB, HML, momentum)
+    3. Calculate factor exposures for the portfolio
+    4. Return performance metrics
+
+    For now, it returns the same factor comparison data as crypto but could be enhanced
+    to use equity-specific data sources and factor models.
+    """
+    ApiData, FactorModel, Logger, cumulative_returns = _load_utils()
+
+    try:
+        # For MVP, validate inputs
+        if not tickers or len(tickers) < 5:
+            return {
+                "error": "Minimum 5 equity tickers required for factor analysis",
+                "tickers_provided": len(tickers) if tickers else 0
+            }
+
+        # Initialize factor model for equity
+        factor_model = FactorModel(
+            df=pd.DataFrame(),  # Empty for now
+            factor="equity_composite",
+            breakpoint=0.5,
+            min_assets=5,
+            weighting_method="equal",
+        )
+
+        # Compute equity factors (MVP implementation)
+        result = factor_model.compute_equity_factors(tickers, start_date, end_date)
+
+        # For MVP, return existing factor comparison data
+        # In production, this would return equity-specific factor exposures
+        comparison_data = []
+        for factor in AVAILABLE_FACTORS:
+            try:
+                df = load_factor_logs(factor)
+                if not df.empty:
+                    row = df.iloc[-1]
+                    comparison_data.append({
+                        "factor": factor,
+                        "annualized_return": row.get("annualized_return"),
+                        "sharpe_ratio": row.get("sharpe_ratio"),
+                        "sortino_ratio": row.get("sortino_ratio"),
+                        "cumulative_returns": row.get("cumulative_returns"),
+                    })
+            except Exception:
+                continue
+
+        return {
+            "equity_analysis": result,
+            "factors": comparison_data,
+            "tickers": tickers,
+            "note": "MVP implementation using existing factor comparison data. Full equity-specific factors coming in v2."
+        }
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error computing equity factors: {str(e)}"
+        )
 
 
 @app.get("/health")

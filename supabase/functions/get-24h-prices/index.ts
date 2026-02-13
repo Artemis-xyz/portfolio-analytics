@@ -11,6 +11,7 @@ interface PriceResult {
   price: number;
   change: number;
   changePct: number;
+  timeSeries?: Array<{ date: string; price: number }>; // Historical prices for metrics calculation
 }
 
 // Initialize Artemis client (null if API key not set)
@@ -152,7 +153,13 @@ async function fetchArtemisPrice(
     const change = currentPrice - startPrice;
     const changePct = (change / startPrice) * 100;
 
-    const result = { price: currentPrice, change, changePct };
+    // Build time series from Artemis data
+    const timeSeries = prices.map((p: any) => ({
+      date: p.date,
+      price: p.val,
+    }));
+
+    const result = { price: currentPrice, change, changePct, timeSeries };
 
     // Cache result for 5 minutes
     priceCache.set(cacheKey, result, 300_000);
@@ -206,7 +213,21 @@ async function fetchYahooPrice(ticker: string, range = "2d"): Promise<PriceResul
     const change = currentPrice - startPrice;
     const changePct = startPrice > 0 ? (change / startPrice) * 100 : 0;
 
-    return { price: currentPrice, change, changePct };
+    // Build time series from Yahoo data
+    const timestamps = result.timestamp || [];
+    const timeSeries = closes
+      .map((close: number | null, i: number) => {
+        if (close !== null && timestamps[i]) {
+          return {
+            date: new Date(timestamps[i] * 1000).toISOString().split('T')[0],
+            price: close,
+          };
+        }
+        return null;
+      })
+      .filter(Boolean) as Array<{ date: string; price: number }>;
+
+    return { price: currentPrice, change, changePct, timeSeries };
   } catch (err) {
     console.error(`Failed to fetch ${ticker}:`, err);
     return null;
@@ -228,12 +249,17 @@ async function fetchCryptoPrice(ticker: string, range = "2d"): Promise<PriceResu
     const spotData = await spotRes.json();
     const currentPrice = parseFloat(spotData?.data?.amount ?? "0");
 
-    // Use Yahoo for historical change data
+    // Use Yahoo for historical change data and time series
     const yahooTicker = `${base}-USD`;
     const yahooData = await fetchYahooPrice(yahooTicker, range);
     if (yahooData) {
       const change = currentPrice * (yahooData.changePct / 100);
-      return { price: currentPrice, change, changePct: yahooData.changePct };
+      // Scale the time series to current price
+      const timeSeries = yahooData.timeSeries?.map((p) => ({
+        date: p.date,
+        price: currentPrice * (p.price / yahooData.price),
+      }));
+      return { price: currentPrice, change, changePct: yahooData.changePct, timeSeries };
     }
 
     return { price: currentPrice, change: 0, changePct: 0 };
@@ -280,6 +306,16 @@ Deno.serve(async (req) => {
   }
 
   try {
+    // Note: Authentication check disabled temporarily until JWT is configured
+    // Price data is not sensitive, so we allow anonymous access
+    // const authHeader = req.headers.get("Authorization");
+    // if (!authHeader) {
+    //   return new Response(JSON.stringify({ error: "Not authenticated" }), {
+    //     status: 401,
+    //     headers: { ...corsHeaders, "Content-Type": "application/json" },
+    //   });
+    // }
+
     const body = await req.json();
     const { tickers, range: requestedRange } = body;
     if (!Array.isArray(tickers) || tickers.length === 0) {

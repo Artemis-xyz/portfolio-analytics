@@ -1,10 +1,33 @@
 project_id = "rctyagxwbequikcdgkec"
 
-[functions.plaid-create-link-token]
+# Privy external authentication configuration
+# Note: Privy JWT configuration is handled in Supabase dashboard under Authentication > Providers
+# The config.toml format doesn't support external JWT providers yet
+# [auth.external.privy]
+# enabled = true
+# jwks_url = "https://auth.privy.io/.well-known/jwks.json"
+# issuer = "privy.io"
+
+[functions.create-privy-user]
 verify_jwt = false
 
-[functions.plaid-exchange-token]
+[functions.import-csv-holdings]
+verify_jwt = false
+
+[functions.update-holding]
+verify_jwt = false
+
+[functions.delete-holding]
 verify_jwt = false
 
 [functions.get-24h-prices]
+verify_jwt = true
+
+[functions.analyze-portfolio]
+verify_jwt = false
+
+[functions.get-factor-performance]
+verify_jwt = false
+
+[functions.compute-portfolio-factors]
 verify_jwt = false

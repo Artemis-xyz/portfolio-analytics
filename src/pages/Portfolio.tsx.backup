@@ -588,6 +588,8 @@ const Portfolio = () => {
     security_name: '',
     ticker: '',
     quantity: '',
+    close_price: '',
+    cost_basis: '',
     asset_type: '',
   });
   const queryClient = useQueryClient();
@@ -950,6 +952,8 @@ const Portfolio = () => {
       security_name: '',
       ticker: '',
       quantity: '',
+      close_price: '',
+      cost_basis: '',
       asset_type: '',
     });
   };
@@ -960,6 +964,8 @@ const Portfolio = () => {
       security_name: '',
       ticker: '',
       quantity: '',
+      close_price: '',
+      cost_basis: '',
       asset_type: '',
     });
   };
@@ -972,25 +978,12 @@ const Portfolio = () => {
       toast.error('Asset name is required');
       return;
     }
-    if (!newHoldingForm.ticker.trim()) {
-      toast.error('Ticker symbol is required');
-      return;
-    }
     if (!newHoldingForm.quantity || parseFloat(newHoldingForm.quantity) <= 0) {
       toast.error('Valid quantity is required');
       return;
     }
-
-    // Get price from API
-    const ticker = newHoldingForm.ticker.trim().toUpperCase();
-    let price = 0;
-
-    if (priceData && priceData[ticker]) {
-      price = priceData[ticker].price;
-    }
-
-    if (price <= 0) {
-      toast.error('Unable to fetch price for this ticker. Please verify the ticker symbol.');
+    if (!newHoldingForm.close_price || parseFloat(newHoldingForm.close_price) <= 0) {
+      toast.error('Valid price is required');
       return;
     }
 
@@ -998,10 +991,10 @@ const Portfolio = () => {
       await createHolding.mutateAsync({
         holding: {
           security_name: newHoldingForm.security_name.trim(),
-          ticker: ticker,
+          ticker: newHoldingForm.ticker.trim() || null,
           quantity: parseFloat(newHoldingForm.quantity),
-          close_price: price,
-          cost_basis: null,
+          close_price: parseFloat(newHoldingForm.close_price),
+          cost_basis: newHoldingForm.cost_basis ? parseFloat(newHoldingForm.cost_basis) : null,
           asset_type: newHoldingForm.asset_type.trim() || null,
         },
         userId: user.id,
@@ -1013,6 +1006,8 @@ const Portfolio = () => {
         security_name: '',
         ticker: '',
         quantity: '',
+        close_price: '',
+        cost_basis: '',
         asset_type: '',
       });
     } catch (err: any) {
@@ -1187,6 +1182,7 @@ const Portfolio = () => {
                         <th className="text-right text-[10px] font-medium text-table-header uppercase tracking-wider px-3 py-2">Qty</th>
                         <th className="text-right text-[10px] font-medium text-table-header uppercase tracking-wider px-3 py-2">Price</th>
                         <th className="text-right text-[10px] font-medium text-table-header uppercase tracking-wider px-3 py-2">Value</th>
+                        <th className="text-right text-[10px] font-medium text-table-header uppercase tracking-wider px-3 py-2">Cost Basis</th>
                         <th className="text-right text-[10px] font-medium text-table-header uppercase tracking-wider px-3 py-2">PNL</th>
                         <th className="text-left text-[10px] font-medium text-table-header uppercase tracking-wider px-3 py-2">Type</th>
                         <th className="text-left text-[10px] font-medium text-table-header uppercase tracking-wider px-3 py-2">Broker</th>
@@ -1247,12 +1243,8 @@ const Portfolio = () => {
                           {/* Value (calculated) */}
                           <td className="text-right px-3 py-1.5">
                             <span className="text-[11px] text-muted-foreground tabular-nums">
-                              {(() => {
-                                const ticker = newHoldingForm.ticker.trim().toUpperCase();
-                                const qty = parseFloat(newHoldingForm.quantity);
-                                if (qty > 0 && ticker && priceData && priceData[ticker]) {
-                                  return formatUsd(qty * priceData[ticker].price);
-                                }
+                              {newHoldingForm.quantity && newHoldingForm.close_price
+                                ? formatUsd(parseFloat(newHoldingForm.quantity) * parseFloat(newHoldingForm.close_price))
                                 : '—'}
                             </span>
                           </td>
@@ -1530,7 +1522,27 @@ const Portfolio = () => {
                         />
                       </div>
                       <div>
-                        
+                        <label className="text-[10px] text-table-header uppercase block mb-1">Price *</label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          placeholder="185.50"
+                          value={newHoldingForm.close_price}
+                          onChange={(e) => setNewHoldingForm({ ...newHoldingForm, close_price: e.target.value })}
+                          className="w-full px-2 py-1.5 text-[11px] border border-border rounded bg-background"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[10px] text-table-header uppercase block mb-1">Cost Basis</label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          placeholder="1500.00"
+                          value={newHoldingForm.cost_basis}
+                          onChange={(e) => setNewHoldingForm({ ...newHoldingForm, cost_basis: e.target.value })}
+                          className="w-full px-2 py-1.5 text-[11px] border border-border rounded bg-background"
+                        />
+                      </div>
                       <div>
                         <label className="text-[10px] text-table-header uppercase block mb-1">Asset Type</label>
                         <input
