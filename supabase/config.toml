@@ -1,0 +1,10 @@
+project_id = "lltvysthcylswqcbohfi"
+
+[functions.plaid-create-link-token]
+verify_jwt = false
+
+[functions.plaid-exchange-token]
+verify_jwt = false
+
+[functions.get-24h-prices]
+verify_jwt = false

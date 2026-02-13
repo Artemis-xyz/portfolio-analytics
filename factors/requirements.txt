@@ -1,0 +1,22 @@
+# Core web framework (for api.py)
+fastapi>=0.109.0
+uvicorn>=0.27.0
+pydantic>=2.0.0
+
+# Data processing
+pandas>=2.0.0
+numpy>=1.24.0
+
+# Environment
+python-dotenv>=1.0.0
+
+# Additional dependencies for factor computation
+artemis
+requests>=2.31.0
+statsmodels>=0.14.0
+matplotlib>=3.7.0
+yfinance>=0.2.36
+
+# Optional: For Jupyter notebooks
+jupyter>=1.0.0
+ipykernel>=6.25.0
