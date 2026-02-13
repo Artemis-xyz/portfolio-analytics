@@ -24,10 +24,11 @@ export interface Transaction {
 export interface AggregatedHolding {
   ticker: string;
   security_name: string;
-  quantity: number;
+  quantity: number;  // Always positive
   average_cost: number; // cost basis per unit
   total_cost_basis: number;
   asset_type: string | null;
+  position_direction: 'long' | 'short';  // Direction of the position
 }
 
 interface PurchaseLot {
@@ -324,7 +325,8 @@ export function parseCoinbaseTransactions(csvText: string): Transaction[] {
 
 /**
  * Parses Binance trade history CSV
- * Expected columns: Date/Time, Asset, Side, Price, Amount, Total
+ * Expected columns: time, base-asset, quote-asset, type, price, quantity, total, fee, fee-currency, trade-id
+ * Format: time, base-asset, quote-asset, type, price, quantity, total, fee, fee-currency, trade-id
  */
 export function parseBinanceTransactions(csvText: string): Transaction[] {
   const rows = parseCSV(csvText);
@@ -335,15 +337,19 @@ export function parseBinanceTransactions(csvText: string): Transaction[] {
   const header = rows[0].map(h => h.toLowerCase().trim());
   const transactions: Transaction[] = [];
 
-  const dateIdx = header.findIndex(h => h.includes('date') || h.includes('time'));
-  const assetIdx = header.findIndex(h => h.includes('asset') || h.includes('symbol') || h.includes('pair'));
-  const sideIdx = header.findIndex(h => h.includes('side') || h.includes('type'));
+  // Binance uses: time, base-asset, quote-asset, type, price, quantity, total, fee, fee-currency
+  const dateIdx = header.findIndex(h => h.includes('time') || h.includes('date'));
+  const baseAssetIdx = header.findIndex(h => h === 'base-asset' || h.includes('base'));
+  const quoteAssetIdx = header.findIndex(h => h === 'quote-asset' || h.includes('quote'));
+  const typeIdx = header.findIndex(h => h === 'type' || h.includes('side'));
   const priceIdx = header.findIndex(h => h.includes('price'));
-  const amountIdx = header.findIndex(h => h.includes('amount') || h.includes('quantity'));
+  const qtyIdx = header.findIndex(h => h === 'quantity' || h.includes('qty'));
   const totalIdx = header.findIndex(h => h.includes('total'));
+  const feeIdx = header.findIndex(h => h === 'fee' && !h.includes('currency'));
+  const feeCurrencyIdx = header.findIndex(h => h.includes('fee-currency') || h.includes('feecurrency'));
 
-  if (dateIdx === -1 || assetIdx === -1 || sideIdx === -1 || priceIdx === -1 || amountIdx === -1) {
-    throw new Error('Missing required columns in Binance CSV. Expected: Date, Asset, Side, Price, Amount');
+  if (dateIdx === -1 || baseAssetIdx === -1 || typeIdx === -1 || priceIdx === -1 || qtyIdx === -1) {
+    throw new Error('Missing required columns in Binance CSV. Expected: time, base-asset, type, price, quantity');
   }
 
   for (let i = 1; i < rows.length; i++) {
@@ -351,24 +357,19 @@ export function parseBinanceTransactions(csvText: string): Transaction[] {
     if (row.length < 5) continue;
 
     try {
-      const side = row[sideIdx].toLowerCase().trim();
-      let asset = row[assetIdx].trim();
-
-      // Extract base asset from trading pair (e.g., BTCUSDT -> BTC)
-      // Common quote assets: USDT, USDC, BUSD, BTC, ETH
-      asset = asset.replace(/USDT$|USDC$|BUSD$|BTC$|ETH$/i, '');
-      asset = normalizeTickerSymbol(asset);
-
-      const quantity = parseFloat(row[amountIdx]);
+      const txType = row[typeIdx].toUpperCase().trim();
+      const baseAsset = normalizeTickerSymbol(row[baseAssetIdx]);
+      const quantity = parseFloat(row[qtyIdx]);
       const price = parseFloat(row[priceIdx].replace(/[$,]/g, ''));
       const total = totalIdx !== -1 ? parseFloat(row[totalIdx].replace(/[$,]/g, '') || '0') : 0;
+      const fee = feeIdx !== -1 ? parseFloat(row[feeIdx].replace(/[$,]/g, '') || '0') : 0;
 
-      if (!asset || isNaN(quantity) || isNaN(price)) continue;
+      if (!baseAsset || isNaN(quantity) || isNaN(price)) continue;
 
       let type: Transaction['type'];
-      if (side.includes('buy')) {
+      if (txType === 'BUY') {
         type = 'buy';
-      } else if (side.includes('sell')) {
+      } else if (txType === 'SELL') {
         type = 'sell';
       } else {
         continue;
@@ -377,12 +378,12 @@ export function parseBinanceTransactions(csvText: string): Transaction[] {
       transactions.push({
         date: parseDate(row[dateIdx]),
         type,
-        ticker: asset,
-        security_name: asset,
+        ticker: baseAsset,
+        security_name: baseAsset,
         quantity: Math.abs(quantity),
         price,
         amount: Math.abs(total || (quantity * price)),
-        fees: 0, // Binance fees are typically in a separate column or included in price
+        fees: Math.abs(fee),
         asset_type: 'Crypto',
       });
     } catch (err) {
@@ -442,7 +443,13 @@ export function aggregateTransactionsToHoldings(transactions: Transaction[]): Ag
       }
 
       if (remainingToSell > 0) {
-        console.warn(`Warning: Sold ${remainingToSell} more ${tx.ticker} than purchased (short sale or missing data)`);
+        // Short sale: sold more than purchased, create negative lot
+        console.log(`Short position: Sold ${remainingToSell} more ${tx.ticker} than purchased`);
+        lots.push({
+          quantity: -remainingToSell,  // Negative quantity represents short
+          price: tx.price,
+          date: tx.date,
+        });
       }
     }
 
@@ -456,8 +463,19 @@ export function aggregateTransactionsToHoldings(transactions: Transaction[]): Ag
     if (lots.length === 0) continue; // Fully sold
 
     const totalQuantity = lots.reduce((sum, lot) => sum + lot.quantity, 0);
-    const totalCost = lots.reduce((sum, lot) => sum + (lot.quantity * lot.price), 0);
-    const averageCost = totalCost / totalQuantity;
+
+    // Determine if this is a net long or short position
+    const isShort = totalQuantity < 0;
+    const position_direction = isShort ? 'short' : 'long';
+
+    // Calculate cost basis only from lots in the same direction
+    const relevantLots = isShort
+      ? lots.filter(lot => lot.quantity < 0)
+      : lots.filter(lot => lot.quantity > 0);
+
+    const totalCost = relevantLots.reduce((sum, lot) => sum + (Math.abs(lot.quantity) * lot.price), 0);
+    const absQuantity = Math.abs(totalQuantity);
+    const averageCost = absQuantity > 0 ? totalCost / absQuantity : 0;
 
     // Get asset type and security name from most recent transaction
     const recentTx = sorted.filter(t => t.ticker === ticker).pop();
@@ -465,10 +483,11 @@ export function aggregateTransactionsToHoldings(transactions: Transaction[]): Ag
     holdings.push({
       ticker,
       security_name: recentTx?.security_name || ticker,
-      quantity: totalQuantity,
+      quantity: absQuantity,  // Always positive
       average_cost: averageCost,
       total_cost_basis: totalCost,
       asset_type: recentTx?.asset_type || null,
+      position_direction,
     });
   }
 

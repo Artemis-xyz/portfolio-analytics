@@ -1,0 +1,34 @@
+# Git
+.git
+.gitignore
+
+# Rust
+target/
+**/*.rs.bk
+*.pdb
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Environment
+.env
+.env.local
+
+# Documentation
+README.md
+*.md
+docs/
+
+# Tests
+tests/test_data/
+
+# CI
+.github/
+
+# Misc
+factor_logs/
+*.log
